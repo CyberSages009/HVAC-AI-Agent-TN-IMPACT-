@@ -18,24 +18,25 @@ Test append: file update verification (2026-02-24)
 
 ## Usage
 
-1. Prepare your HVAC data in CSV format with columns: `timestamp`, `temperature`, `humidity`, `energy_consumption`, etc.
+1. Prepare your HVAC data in CSV format with columns:
+   `timestamp`, `kWh`, `iKW-TR`, `ambient_temp`, `load_profile`.
 
-2. Place the data file (e.g., `hvac_data.csv`) in the project directory.
-
-3. Run the analysis:
+2. Launch the Streamlit app:
    ```bash
-   python main.py
+   streamlit run main.py
    ```
 
-The script will:
-- Load and preprocess the data
-- Train a machine learning model to forecast energy consumption
-- Detect anomalies in energy usage
-- Provide optimization recommendations
+3. Upload your CSV in the sidebar, or use the simulated dataset.
+
+The app will:
+- Load and validate HVAC data
+- Run an Analyzer Agent for demand drift and anomaly diagnostics
+- Show operational charts and anomaly tables
+- Generate actionable recommendations and a downloadable decision snapshot
 
 ## Features
 
-- Energy consumption forecasting using Random Forest regression
-- Anomaly detection based on statistical thresholds
-- Automated recommendations for system optimization
-- Data visualization of predictions vs actual values
+- Streamlit dashboard with HVAC operations, forecast, diagnostics, and recommendations tabs
+- Rule-based Analyzer Agent with configurable anomaly sensitivity
+- Z-score anomaly detection and demand drift monitoring
+- Action-focused optimization recommendations from agent findings

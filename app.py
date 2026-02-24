@@ -1,9 +1,84 @@
 import numpy as np
 import pandas as pd
 import streamlit as st
+from dataclasses import dataclass
 
 
 REQUIRED_COLUMNS = ["timestamp", "kWh", "iKW-TR", "ambient_temp", "load_profile"]
+
+
+@dataclass
+class AgentFinding:
+    severity: str
+    title: str
+    detail: str
+    recommendation: str
+
+
+class AnalyzerAgent:
+    def __init__(self, sensitivity: str = "Medium") -> None:
+        self.sensitivity = sensitivity
+        self.z_threshold = {"Low": 2.7, "Medium": 2.3, "High": 1.9}.get(sensitivity, 2.3)
+
+    def run(self, df: pd.DataFrame) -> dict:
+        working = df.copy()
+        working["kWh_z"] = (working["kWh"] - working["kWh"].mean()) / working["kWh"].std(ddof=0)
+        anomalies = working.loc[working["kWh_z"].abs() > self.z_threshold, ["timestamp", "kWh", "iKW-TR"]]
+
+        recent_window = working.tail(12)
+        baseline_window = working.tail(72).head(60)
+
+        recent_kwh = float(recent_window["kWh"].mean())
+        baseline_kwh = float(baseline_window["kWh"].mean()) if not baseline_window.empty else recent_kwh
+        demand_shift_pct = ((recent_kwh - baseline_kwh) / baseline_kwh * 100) if baseline_kwh else 0.0
+
+        temp_kwh_corr = float(working["ambient_temp"].corr(working["kWh"]))
+        peak_row = working.loc[working["kWh"].idxmax()]
+
+        findings: list[AgentFinding] = []
+        findings.append(
+            AgentFinding(
+                severity="high" if demand_shift_pct > 8 else "medium" if demand_shift_pct > 4 else "low",
+                title="Recent demand drift",
+                detail=f"Last 12h avg demand is {recent_kwh:.1f} kWh vs 72h baseline {baseline_kwh:.1f} kWh ({demand_shift_pct:+.1f}%).",
+                recommendation="Tune chilled-water and AHU schedules for late-day hours if drift persists for 2+ days.",
+            )
+        )
+
+        findings.append(
+            AgentFinding(
+                severity="medium" if temp_kwh_corr > 0.55 else "low",
+                title="Weather sensitivity",
+                detail=f"Ambient temperature to energy correlation is {temp_kwh_corr:.2f}.",
+                recommendation="Pre-cool before peak ambient periods and verify sensor calibration around noon-afternoon intervals.",
+            )
+        )
+
+        findings.append(
+            AgentFinding(
+                severity="high" if anomalies.shape[0] >= 8 else "medium" if anomalies.shape[0] >= 4 else "low",
+                title="Anomaly concentration",
+                detail=f"Detected {int(anomalies.shape[0])} anomaly points at sensitivity '{self.sensitivity}' (|z| > {self.z_threshold}).",
+                recommendation="Inspect top anomaly windows for valve hunting, staging conflicts, and occupancy mismatches.",
+            )
+        )
+
+        findings.append(
+            AgentFinding(
+                severity="medium",
+                title="Peak energy event",
+                detail=f"Highest demand occurred at {peak_row['timestamp']} with {peak_row['kWh']:.1f} kWh and iKW-TR {peak_row['iKW-TR']:.3f}.",
+                recommendation="Use this timestamp as a replay scenario for control-strategy simulation.",
+            )
+        )
+
+        findings = sorted(findings, key=lambda item: {"high": 0, "medium": 1, "low": 2}[item.severity])
+        return {
+            "anomalies": anomalies,
+            "findings": findings,
+            "demand_shift_pct": demand_shift_pct,
+            "corr_temp_kwh": temp_kwh_corr,
+        }
 
 
 def inject_styles() -> None:
@@ -141,7 +216,7 @@ def run() -> None:
 
         st.divider()
         st.markdown("**Agent Status**")
-        st.markdown("- Analyzer: Ready")
+        st.markdown("- Analyzer: Active")
         st.markdown("- Forecaster: UI Ready")
         st.markdown("- Diagnostic: UI Ready")
         st.markdown("- Optimizer: UI Ready")
@@ -160,6 +235,9 @@ def run() -> None:
             data_source = "Uploaded CSV"
     else:
         df = generate_demo_data()
+
+    analyzer = AnalyzerAgent(sensitivity=anomaly_sensitivity)
+    analyzer_result = analyzer.run(df)
 
     st.markdown(
         """
@@ -222,26 +300,34 @@ def run() -> None:
 
     with tab3:
         st.subheader("Anomaly and Efficiency Diagnostics")
-        st.info("Diagnostic Agent integration planned for Phase 4 (Z-score / Isolation Forest).")
-        z = (df["kWh"] - df["kWh"].mean()) / df["kWh"].std(ddof=0)
-        flagged = df.loc[z.abs() > 2, ["timestamp", "kWh", "iKW-TR"]]
+        st.info("Analyzer Agent is running with rule-based diagnostics.")
+        flagged = analyzer_result["anomalies"]
         st.metric("Potential Anomaly Points", int(flagged.shape[0]))
+        st.metric("Recent Demand Shift", f"{analyzer_result['demand_shift_pct']:+.1f}%")
+        st.metric("Temp-Energy Correlation", f"{analyzer_result['corr_temp_kwh']:.2f}")
         st.dataframe(flagged.tail(10), use_container_width=True)
 
     with tab4:
-        st.subheader("Optimization Actions")
-        st.success("Optimization Agent placeholder is active.")
-        st.markdown(
-            """
-            1. Raise chilled-water setpoint by 0.5-1.0 C during low occupancy windows.
-            2. Rebalance chiller staging to keep units near best-efficiency range.
-            3. Investigate high iKW-TR windows tied to afternoon ambient peaks.
-            4. Schedule preventive maintenance for assets with sustained efficiency drift.
-            """
-        )
+        st.subheader("Agent Recommendations")
+        st.success("Analyzer Agent generated actionable findings.")
+        severity_badge = {"high": "HIGH", "medium": "MEDIUM", "low": "LOW"}
+        for i, finding in enumerate(analyzer_result["findings"], start=1):
+            st.markdown(
+                f"**{i}. [{severity_badge[finding.severity]}] {finding.title}**\n\n"
+                f"- Observation: {finding.detail}\n"
+                f"- Action: {finding.recommendation}"
+            )
         st.download_button(
             "Download Decision Snapshot (.txt)",
-            data="HVAC Decision Report placeholder. Full report export will be added in Phase 6.",
+            data="\n".join(
+                [
+                    "HVAC Analyzer Agent Snapshot",
+                    *[
+                        f"{idx}. [{finding.severity.upper()}] {finding.title} | {finding.detail} | {finding.recommendation}"
+                        for idx, finding in enumerate(analyzer_result["findings"], start=1)
+                    ],
+                ]
+            ),
             file_name="hvac_decision_snapshot.txt",
             mime="text/plain",
         )
